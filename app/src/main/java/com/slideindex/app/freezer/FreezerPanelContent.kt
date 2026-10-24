@@ -163,6 +163,11 @@ fun FreezerPanelContent(
         Unit
     }
 
+    // 打开面板时把分身里的应用自动加进列表（每个分身只加一次）。
+    LaunchedEffect(Unit) {
+        FreezerCloneSupport.syncCloneMembers(context, settingsRepository)
+    }
+
     LaunchedEffect(settings.freezerAppPackages) {
         if (settings.freezerAppPackages.isEmpty()) {
             memberApps = emptyList()
@@ -172,7 +177,7 @@ fun FreezerPanelContent(
         if (memberApps.isEmpty()) {
             isLoading = true
         }
-        memberApps = appRepository.resolveFreezerMembers(settings.freezerAppPackages)
+        memberApps = FreezerCloneSupport.resolveMembers(appRepository, settings.freezerAppPackages)
         isLoading = false
     }
 

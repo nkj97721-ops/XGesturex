@@ -40,7 +40,8 @@ internal object FreezerPrivilegedOps {
      * 暂停 / 冻结这些包会让用户「回不来」或没有意义：本应用自身、system、SystemUI、当前桌面。
      * AOSP 对挂起自带的拒绝名单不含输入法与 SystemUI，这里补一层。
      */
-    fun isProtectedPackage(context: Context, packageName: String): Boolean {
+    fun isProtectedPackage(context: Context, rawPackageName: String): Boolean {
+        val packageName = FreezerCloneKey.basePackage(rawPackageName)
         if (packageName == BuildConfig.APPLICATION_ID) return true
         if (packageName == ANDROID_PACKAGE || packageName == SYSTEM_UI_PACKAGE) return true
         val homePackage = runCatching {
@@ -56,9 +57,32 @@ internal object FreezerPrivilegedOps {
         return homePackage == packageName
     }
 
+    /** 分身（包名#用户ID）经 Shizuku 查指定用户；普通应用走原来的本地查询。 */
     private fun appFlags(context: Context, packageName: String): Pair<Boolean, Boolean>? = runCatching {
-        val info = context.packageManager.getApplicationInfo(packageName, APP_INFO_FLAGS)
+        val cloneUserId = FreezerCloneKey.userIdOf(packageName)
+        val info: ApplicationInfo = (
+            if (cloneUserId == null) {
+                context.packageManager.getApplicationInfo(packageName, APP_INFO_FLAGS)
+            } else {
+                appInfoAsUser(FreezerCloneKey.basePackage(packageName), cloneUserId)
+            }
+            ) ?: return@runCatching null
         info.enabled to ((info.flags and ApplicationInfo.FLAG_SUSPENDED) != 0)
+    }.getOrNull()
+
+    /** 经 Shizuku 调 IPackageManager.getApplicationInfo(包名, flags, 用户)。 */
+    private fun appInfoAsUser(packageName: String, userId: Int): ApplicationInfo? = runCatching {
+        val packageManager = bindShizukuPackageManager()
+        val method = packageManager.javaClass.methods.first {
+            it.name == "getApplicationInfo" && it.parameterTypes.size == 3
+        }
+        // Android 13 起 flags 是 long，之前是 int。
+        val flagsArg: Any = if (method.parameterTypes[1] == java.lang.Long.TYPE) {
+            APP_INFO_FLAGS.toLong()
+        } else {
+            APP_INFO_FLAGS
+        }
+        method.invoke(packageManager, packageName, flagsArg, userId) as? ApplicationInfo
     }.getOrNull()
 
     fun setAppDisabled(context: Context, packageName: String, disabled: Boolean): Pair<Boolean, String> {
@@ -68,12 +92,12 @@ internal object FreezerPrivilegedOps {
         val shizukuRoot = TaskManagerUtil.probeRootAvailable()
         val useRoot = PrivilegeGateway.isRootMode() ||
             (PrivilegeGateway.isShizukuMode() && shizukuRoot)
-        val userId = resolveUserId(useRoot)
+        val userId = FreezerCloneKey.userIdOf(packageName) ?: resolveUserId(useRoot)
 
         if (disabled) {
-            TaskManagerUtil.forceStopPackage(packageName)
+            if (!FreezerCloneKey.isClone(packageName)) TaskManagerUtil.forceStopPackage(packageName)
             TaskManagerUtil.runShellCommandLine(
-                "am force-stop --user $userId $packageName",
+                "am force-stop --user $userId ${FreezerCloneKey.basePackage(packageName)}",
                 useRoot = useRoot
             )
         }
@@ -140,13 +164,13 @@ internal object FreezerPrivilegedOps {
         val shizukuRoot = TaskManagerUtil.probeRootAvailable()
         val useRoot = PrivilegeGateway.isRootMode() ||
             (PrivilegeGateway.isShizukuMode() && shizukuRoot)
-        val userId = resolveUserId(useRoot)
+        val userId = FreezerCloneKey.userIdOf(packageName) ?: resolveUserId(useRoot)
 
         if (suspended) {
             // 挂起只拦启动、不拦后台（框架不做 force-stop），这里与冻结保持一致先杀进程。
-            TaskManagerUtil.forceStopPackage(packageName)
+            if (!FreezerCloneKey.isClone(packageName)) TaskManagerUtil.forceStopPackage(packageName)
             TaskManagerUtil.runShellCommandLine(
-                "am force-stop --user $userId $packageName",
+                "am force-stop --user $userId ${FreezerCloneKey.basePackage(packageName)}",
                 useRoot = useRoot
             )
         }
@@ -201,7 +225,7 @@ internal object FreezerPrivilegedOps {
             it.name == "setPackagesSuspendedAsUser"
         } ?: return@runCatching AttemptResult.Failure("setPackagesSuspendedAsUser not found")
         val dialogInfo = if (suspended) buildSuspendDialogInfo(dialogMessage) else null
-        val packages = arrayOf(packageName)
+        val packages = arrayOf(FreezerCloneKey.basePackage(packageName))
         val args: Array<Any?> = when (method.parameterTypes.size) {
             // A12 / A13 / A14.0 / A14-QPR1
             7 -> arrayOf(packages, suspended, null, null, dialogInfo, suspendingPackage, userId)
@@ -238,13 +262,13 @@ internal object FreezerPrivilegedOps {
         }
         val commands = if (suspended) {
             buildList {
-                add("pm $verb --user $userId$dialogArg $packageName")
-                if (useRoot) add("pm $verb$dialogArg $packageName")
+                add("pm $verb --user $userId$dialogArg ${FreezerCloneKey.basePackage(packageName)}")
+                if (useRoot) add("pm $verb$dialogArg ${FreezerCloneKey.basePackage(packageName)}")
             }
         } else {
             buildList {
-                if (useRoot) add("pm $verb $packageName")
-                add("pm $verb --user $userId $packageName")
+                if (useRoot) add("pm $verb ${FreezerCloneKey.basePackage(packageName)}")
+                add("pm $verb --user $userId ${FreezerCloneKey.basePackage(packageName)}")
             }
         }
         var lastOutput = ""
@@ -284,10 +308,8 @@ internal object FreezerPrivilegedOps {
         return isAppSuspended(context, packageName) == suspended
     }
 
-    private fun appExists(context: Context, packageName: String): Boolean = runCatching {
-        context.packageManager.getApplicationInfo(packageName, APP_INFO_FLAGS)
-        true
-    }.getOrDefault(false)
+    private fun appExists(context: Context, packageName: String): Boolean =
+        appFlags(context, packageName) != null
 
     private fun resolveUserId(useRoot: Boolean): Int {
         val shellUser = TaskManagerUtil.runShellCommandLine("am get-current-user", useRoot = useRoot)
@@ -313,7 +335,7 @@ internal object FreezerPrivilegedOps {
             "getApplicationEnabledSetting",
             String::class.java,
             Int::class.javaPrimitiveType
-        ).invoke(packageManager, packageName, userId) as Int
+        ).invoke(packageManager, FreezerCloneKey.basePackage(packageName), userId) as Int
     }.getOrNull()
 
     private fun isSystemDisabled(packageName: String, userId: Int): Boolean {
@@ -345,7 +367,7 @@ internal object FreezerPrivilegedOps {
                 String::class.java
             ).invoke(
                 packageManager,
-                packageName,
+                FreezerCloneKey.basePackage(packageName),
                 newState,
                 PackageManager.DONT_KILL_APP,
                 userId,
@@ -371,14 +393,14 @@ internal object FreezerPrivilegedOps {
         val verb = if (disabled) "disable" else "enable"
         val commands = if (disabled) {
             buildList {
-                add("pm $verb --user $userId $packageName")
-                if (useRoot) add("pm $verb $packageName")
+                add("pm $verb --user $userId ${FreezerCloneKey.basePackage(packageName)}")
+                if (useRoot) add("pm $verb ${FreezerCloneKey.basePackage(packageName)}")
             }
         } else {
             buildList {
-                if (useRoot) add("pm $verb $packageName")
-                add("pm $verb --user $userId $packageName")
-                if (!useRoot) add("pm $verb $packageName")
+                if (useRoot) add("pm $verb ${FreezerCloneKey.basePackage(packageName)}")
+                add("pm $verb --user $userId ${FreezerCloneKey.basePackage(packageName)}")
+                if (!useRoot) add("pm $verb ${FreezerCloneKey.basePackage(packageName)}")
             }
         }
         var lastOutput = ""

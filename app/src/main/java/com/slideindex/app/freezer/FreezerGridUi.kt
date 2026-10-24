@@ -104,14 +104,14 @@ fun FreezerGridUi(
     val scope = rememberCoroutineScope()
     var actionTarget by remember { mutableStateOf<AppInfo?>(null) }
 
-    val filteredApps = remember(memberApps, searchQuery) {
+    val filteredApps = remember(memberApps, searchQuery, freezeStateRevision) {
         val query = searchQuery.trim().lowercase()
         memberApps.filter { app ->
             query.isBlank() ||
                 app.label.contains(query, ignoreCase = true) ||
                 app.packageName.contains(query, ignoreCase = true) ||
                 app.pinyinKey.contains(query)
-        }
+        }.sortedByDescending { app -> FreezerPinStore.isPinned(context, app.packageName) }
     }
 
     val columnCount = if (
@@ -269,8 +269,28 @@ fun FreezerGridUi(
                         dismissMenu()
                     }
                 },
+                onTogglePin = {
+                    FreezerPinStore.setPinned(
+                        context,
+                        app.packageName,
+                        !FreezerPinStore.isPinned(context, app.packageName),
+                    )
+                    onFreezeStateRevisionBump()
+                    dismissMenu()
+                },
+                onToggleWhitelist = {
+                    FreezerPinStore.setWhitelisted(
+                        context,
+                        app.packageName,
+                        !FreezerPinStore.isWhitelisted(context, app.packageName),
+                    )
+                    onFreezeStateRevisionBump()
+                    dismissMenu()
+                },
                 onAddToHome = {
-                    if (!FreezerAppShortcutHelper.requestPinAppShortcut(context, app)) {
+                    if (!FreezerCloneKey.isClone(app.packageName) &&
+                        !FreezerAppShortcutHelper.requestPinAppShortcut(context, app)
+                    ) {
                         FreezerAppShortcutHelper.showPinShortcutFailedToast(context)
                     }
                     dismissMenu()
@@ -330,6 +350,8 @@ private data class FreezerAppActionCallbacks(
     val onAddToHome: () -> Unit,
     val onRemoveFromList: () -> Unit,
     val onRestoreAndRemoveFromList: () -> Unit,
+    val onTogglePin: () -> Unit,
+    val onToggleWhitelist: () -> Unit,
 )
 
 @Composable
@@ -351,12 +373,23 @@ private fun FreezerAppActionOverlayDialog(
     val unfreezeAndRemoveLabel = stringResource(R.string.freezer_unfreeze_and_remove)
     val unpauseAndRemoveLabel = stringResource(R.string.freezer_unpause_and_remove)
     val cancelLabel = stringResource(R.string.cancel)
+    val dialogContext = LocalContext.current
+    val pinLabel = if (FreezerPinStore.isPinned(dialogContext, app.packageName)) "取消置顶" else "置顶"
+    val whitelistLabel = if (FreezerPinStore.isWhitelisted(dialogContext, app.packageName)) {
+        "移出白名单"
+    } else {
+        "加入白名单"
+    }
     val menuEntry = DropdownEntry(
         items = buildList {
             add(DropdownItem(text = launchFreeWindowLabel, onClick = callbacks.onLaunchFreeWindow))
             add(DropdownItem(text = freezeLabel, onClick = callbacks.onToggleFrozen))
             add(DropdownItem(text = pauseLabel, onClick = callbacks.onTogglePaused))
-            add(DropdownItem(text = addToHomeLabel, onClick = callbacks.onAddToHome))
+            add(DropdownItem(text = pinLabel, onClick = callbacks.onTogglePin))
+            add(DropdownItem(text = whitelistLabel, onClick = callbacks.onToggleWhitelist))
+            if (!FreezerCloneKey.isClone(app.packageName)) {
+                add(DropdownItem(text = addToHomeLabel, onClick = callbacks.onAddToHome))
+            }
             when {
                 state.isFrozen -> add(
                     DropdownItem(text = unfreezeAndRemoveLabel, onClick = callbacks.onRestoreAndRemoveFromList),
@@ -399,11 +432,19 @@ private fun FreezerAppActionOverlayMenu(
     val unfreezeAndRemoveLabel = stringResource(R.string.freezer_unfreeze_and_remove)
     val unpauseAndRemoveLabel = stringResource(R.string.freezer_unpause_and_remove)
     val cancelLabel = stringResource(R.string.cancel)
+    val pinLabel = if (FreezerPinStore.isPinned(context, app.packageName)) "取消置顶" else "置顶"
+    val whitelistLabel = if (FreezerPinStore.isWhitelisted(context, app.packageName)) {
+        "移出白名单"
+    } else {
+        "加入白名单"
+    }
     val menuItems = buildList {
         add(launchFreeWindowLabel to callbacks.onLaunchFreeWindow)
         add(freezeLabel to callbacks.onToggleFrozen)
         add(pauseLabel to callbacks.onTogglePaused)
-        add(addToHomeLabel to callbacks.onAddToHome)
+        add(pinLabel to callbacks.onTogglePin)
+        add(whitelistLabel to callbacks.onToggleWhitelist)
+        if (!FreezerCloneKey.isClone(app.packageName)) add(addToHomeLabel to callbacks.onAddToHome)
         when {
             state.isFrozen -> add(unfreezeAndRemoveLabel to callbacks.onRestoreAndRemoveFromList)
             state.isPaused -> add(unpauseAndRemoveLabel to callbacks.onRestoreAndRemoveFromList)
@@ -411,10 +452,10 @@ private fun FreezerAppActionOverlayMenu(
         }
     }
     var iconBitmap by remember(app.packageName) {
-        mutableStateOf(PickerAppIconBitmap.peek(app.packageName))
+        mutableStateOf(PickerAppIconBitmap.peek(FreezerCloneKey.basePackage(app.packageName)))
     }
     LaunchedEffect(app.packageName) {
-        iconBitmap = PickerAppIconBitmap.load(context, app.packageName)
+        iconBitmap = PickerAppIconBitmap.load(context, FreezerCloneKey.basePackage(app.packageName))
     }
     val iconColorFilter = if (state.isActive) {
         null
@@ -547,10 +588,10 @@ private fun FreezerGridItem(
 ) {
     val context = LocalContext.current
     var iconBitmap by remember(app.packageName) {
-        mutableStateOf(PickerAppIconBitmap.peek(app.packageName))
+        mutableStateOf(PickerAppIconBitmap.peek(FreezerCloneKey.basePackage(app.packageName)))
     }
     LaunchedEffect(app.packageName) {
-        iconBitmap = PickerAppIconBitmap.load(context, app.packageName)
+        iconBitmap = PickerAppIconBitmap.load(context, FreezerCloneKey.basePackage(app.packageName))
     }
     val grayscale = if (state.isActive) {
         null
@@ -627,7 +668,7 @@ private fun FreezerGridItem(
             }
         }
         Text(
-            text = app.label,
+            text = FreezerPinStore.marker(context, app.packageName) + app.label,
             style = MaterialTheme.typography.bodyMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

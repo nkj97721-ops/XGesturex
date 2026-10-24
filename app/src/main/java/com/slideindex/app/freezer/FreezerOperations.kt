@@ -206,6 +206,10 @@ object FreezerOperations {
                 // 按全局工作模式兜底），也不需要在启动前做任何恢复。
                 Unit
         }
+        if (FreezerCloneKey.isClone(app.packageName)) {
+            // 分身：直接在对应用户里启动，不经过系统「选主应用还是分身」的弹窗。
+            return@withContext FreezerCloneSupport.launchClone(app.packageName)
+        }
         withContext(Dispatchers.Main) {
             launchApp(context, app, settings, appRepository, fullscreen)
         }
@@ -269,6 +273,8 @@ object FreezerOperations {
         var frozen = 0
         var paused = 0
         for (pkg in packages) {
+            // 白名单里的应用：批量收回时跳过。
+            if (FreezerPinStore.isWhitelisted(context, pkg)) continue
             val state = stateOf(context, pkg)
             val decision = FreezerIntentResolution.decide(
                 state = state,
@@ -330,6 +336,7 @@ object FreezerOperations {
         }
         var count = 0
         for (pkg in packages) {
+            if (FreezerPinStore.isWhitelisted(context, pkg)) continue
             if (stateOf(context, pkg).isActive && setPaused(context, pkg, paused = true)) count++
         }
         if (report) {
