@@ -210,6 +210,10 @@ object FreezerOperations {
             // 分身：直接在对应用户里启动，不经过系统「选主应用还是分身」的弹窗。
             return@withContext FreezerCloneSupport.launchClone(app.packageName)
         }
+        // 主应用：全屏启动时也走 shell 指定用户启动，避免系统弹出「主应用 / 分身」选择框。
+        if (fullscreen && hasShellAccess() && FreezerCloneSupport.launchMain(app.packageName)) {
+            return@withContext true
+        }
         withContext(Dispatchers.Main) {
             launchApp(context, app, settings, appRepository, fullscreen)
         }

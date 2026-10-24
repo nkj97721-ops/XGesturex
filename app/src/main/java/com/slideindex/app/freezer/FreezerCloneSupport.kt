@@ -101,12 +101,20 @@ internal object FreezerCloneSupport {
     }
 
     /** 在指定用户里直接启动分身应用（不经过系统的"选主应用还是分身"弹窗）。 */
-    suspend fun launchClone(key: String): Boolean = withContext(Dispatchers.IO) {
-        val packageName = FreezerCloneKey.basePackage(key)
-        val userId = FreezerCloneKey.userIdOf(key) ?: return@withContext false
-        val command = "am start --user $userId -n \$(cmd package resolve-activity --brief --user $userId " +
-            "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName | tail -n 1)"
-        val output = TaskManagerUtil.runShellCommandLine("sh -c '$command'", useRoot = false).output
-        !output.contains("Error", ignoreCase = true) && !output.contains("Exception", ignoreCase = true)
+    suspend fun launchClone(key: String): Boolean {
+        val userId = FreezerCloneKey.userIdOf(key) ?: return false
+        return launchAsUser(FreezerCloneKey.basePackage(key), userId)
     }
+
+    /** 主应用也用同样的方式启动，绕开系统弹窗；失败时调用方回退到原来的启动方式。 */
+    suspend fun launchMain(packageName: String): Boolean =
+        launchAsUser(packageName, android.os.Process.myUserHandle().hashCode())
+
+    private suspend fun launchAsUser(packageName: String, userId: Int): Boolean =
+        withContext(Dispatchers.IO) {
+            val command = "am start --user $userId -n \$(cmd package resolve-activity --brief --user $userId " +
+                "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName | tail -n 1)"
+            val output = TaskManagerUtil.runShellCommandLine("sh -c '$command'", useRoot = false).output
+            !output.contains("Error", ignoreCase = true) && !output.contains("Exception", ignoreCase = true)
+        }
 }
