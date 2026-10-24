@@ -1,0 +1,58 @@
+name: XBuild
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Build
+        id: build
+        run: |
+          set +e
+          ./gradlew assembleLiteDebug --build-cache --console=plain > build.log 2>&1
+          code=$?
+          tail -n 80 build.log
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Save error log
+        if: steps.build.outputs.code != '0'
+        run: |
+          grep -E "^e: |What went wrong|Execution failed|error:|AAPT|Unresolved" -A3 build.log | head -n 150 > build-error.txt || true
+          echo "----- tail -----" >> build-error.txt
+          tail -n 60 build.log >> build-error.txt
+          rm -rf "$RUNNER_TEMP/lg" && mkdir "$RUNNER_TEMP/lg"
+          cp build-error.txt "$RUNNER_TEMP/lg/"
+          cd "$RUNNER_TEMP/lg"
+          git init -q
+          git checkout -q -b buildlog
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-error.txt
+          git commit -q -m "build log"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" buildlog
+      - name: Fail if build failed
+        if: steps.build.outputs.code != '0'
+        run: exit 1
+      - name: Upload debug APK
+        if: steps.build.outputs.code == '0'
+        uses: actions/upload-artifact@v7
+        with:
+          name: xgesturex-lite-debug
+          path: app/build/outputs/apk/lite/debug/*.apk
+          if-no-files-found: error
