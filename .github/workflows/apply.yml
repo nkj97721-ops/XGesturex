@@ -1,0 +1,60 @@
+name: Apply patch
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'patch/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Apply patch zip
+        id: apply
+        run: |
+          if [ -f patch/patch.zip ]; then
+            unzip -o -q patch/patch.zip -d .
+            if [ -f patch.py ]; then
+              python3 patch.py > patch-log.txt 2>&1 || echo "failed=1" >> "$GITHUB_OUTPUT"
+              rm -f patch.py
+            fi
+            rm -rf patch
+          fi
+      - name: Report failure
+        if: steps.apply.outputs.failed == '1'
+        run: |
+          rm -rf "$RUNNER_TEMP/lg" && mkdir "$RUNNER_TEMP/lg"
+          cp patch-log.txt "$RUNNER_TEMP/lg/build-error.txt"
+          cd "$RUNNER_TEMP/lg"
+          git init -q
+          git checkout -q -b buildlog
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-error.txt
+          git commit -q -m "patch log"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" buildlog
+          exit 1
+      - name: Commit and push
+        run: |
+          rm -f patch-log.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: apply patch"
+          git push
+      - name: Trigger build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run xbuild.yml --ref main
