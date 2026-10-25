@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Deselect
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.DropdownMenu
@@ -183,7 +184,8 @@ fun FreezerPanelContent(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
+            // freezer_manual_refresh：不再每次回到前台自动刷新，改由顶栏刷新按钮手动触发。
+            if (event == Lifecycle.Event.ON_RESUME && false) {
                 freezeStateRevision++
             }
         }
@@ -417,6 +419,20 @@ fun FreezerPanelContent(
                 } else {
                     // ⚠️ 下面这一大块刻意保持原有缩进：只为套一层 if/else 就整体重排，
                     // 会造出上百行纯缩进 diff，把真正的改动埋在里面。
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            FreezerCloneSupport.syncCloneMembers(context, settingsRepository, force = true)
+                            freezeStateRevision++
+                        }
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "刷新",
+                        tint = MiuixTheme.colorScheme.onBackground
+                    )
+                }
                 MiuixExpandableSearchIconAction(
                     expanded = searchExpanded,
                     query = searchQuery,

@@ -16,7 +16,7 @@ object ScreenControlPrefs {
 
     const val MIN_WIDTH_DP = 164
     const val MAX_WIDTH_DP = 264
-    const val MIN_HEIGHT_DP = 252
+    const val MIN_HEIGHT_DP = 170
     const val MAX_HEIGHT_DP = 672
 
     const val DEFAULT_WIDTH_DP = 176

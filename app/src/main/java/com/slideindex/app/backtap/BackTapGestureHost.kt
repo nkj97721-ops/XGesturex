@@ -87,7 +87,8 @@ class BackTapGestureHost @Inject constructor(
 
     private fun applyRuntime(settings: AppSettings) {
         val backTap = settings.backTapSettings
-        val shouldRun = backTap.enabled && settings.serviceEnabled
+        // 双击背部功能已禁用：不再注册传感器。
+        val shouldRun = false
         if (!shouldRun) {
             detector?.stop()
             detector = null

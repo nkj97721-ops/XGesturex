@@ -260,10 +260,10 @@ internal class SlideIndexAccessibilityForegroundTracker(
          * `TYPE_WINDOWS_CHANGED` 的最短处理间隔。与无障碍配置里的 `notificationTimeout="100"`
          * 同量级：即使系统把事件按 10 次/秒投递过来，重活也只按这个间隔跑一次。
          */
-        private const val WINDOWS_CHANGED_COALESCE_MS = 200L
+        private const val WINDOWS_CHANGED_COALESCE_MS = 1000L
 
         /** 锁屏判定（读 `service.windows`）的最短间隔。 */
-        private const val LOCK_SCREEN_WORK_TTL_MS = 500L
+        private const val LOCK_SCREEN_WORK_TTL_MS = 2000L
     }
 }
 

@@ -282,8 +282,8 @@ private fun FreezerOverlayRoot(
                         onClick = {}
                     ),
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                tonalElevation = 0.dp
             ) {
                 Box(modifier = Modifier.navigationBarsPadding()) {
                     FreezerPanelContent(

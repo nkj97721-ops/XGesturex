@@ -38,6 +38,8 @@ internal object FreezerCloneKey {
 internal object FreezerCloneSupport {
     private const val SEEN_PREFS = "freezer_clone_seen"
     private const val SEEN_KEY = "seen"
+    private const val LAST_SYNC_KEY = "last_sync"
+    private const val SYNC_INTERVAL_MS = 10 * 60 * 1000L
 
     /**
      * 解析冰箱成员：普通应用走原有逻辑；分身借用主应用的名称和拼音，名字前加数字，
@@ -72,31 +74,41 @@ internal object FreezerCloneSupport {
     /**
      * 打开面板时，把分身用户里的第三方应用自动加进冰箱列表。
      * 每个分身只会加一次：你把它移出列表以后不会再被自动加回来。
+     * 省电：5 个用户合并成一次 shell 调用，并且 10 分钟内最多同步一次。
      */
-    suspend fun syncCloneMembers(context: Context, settingsRepository: SettingsRepository) {
+    suspend fun syncCloneMembers(
+        context: Context,
+        settingsRepository: SettingsRepository,
+        force: Boolean = false,
+    ) {
         withContext(Dispatchers.IO) {
             if (!TaskManagerUtil.hasPrivilegedAccess()) return@withContext
             val prefs = context.applicationContext.getSharedPreferences(SEEN_PREFS, Context.MODE_PRIVATE)
-            val seen = prefs.getStringSet(SEEN_KEY, emptySet()).orEmpty().toMutableSet()
-            var changed = false
-            for (userId in FreezerCloneKey.USER_IDS) {
-                val output = TaskManagerUtil.runShellCommandLine(
-                    "pm list packages -3 --user $userId",
-                    useRoot = false,
-                ).output
-                for (rawLine in output.lineSequence()) {
-                    val line = rawLine.trim()
-                    if (!line.startsWith("package:")) continue
-                    val packageName = line.removePrefix("package:").trim()
-                    if (packageName.isEmpty()) continue
-                    if (packageName == BuildConfig.APPLICATION_ID || packageName.startsWith("com.slideindex.app")) continue
-                    val key = FreezerCloneKey.make(packageName, userId)
-                    if (!seen.add(key)) continue
-                    settingsRepository.addFreezerApp(key)
-                    changed = true
-                }
+            val now = System.currentTimeMillis()
+            if (!force && now - prefs.getLong(LAST_SYNC_KEY, 0L) < SYNC_INTERVAL_MS) return@withContext
+
+            val script = FreezerCloneKey.USER_IDS.joinToString("; ") { userId ->
+                "echo @@$userId; pm list packages -3 --user $userId 2>/dev/null"
             }
-            if (changed) prefs.edit().putStringSet(SEEN_KEY, seen).apply()
+            val output = TaskManagerUtil.runShellCommandLine("sh -c '$script'", useRoot = false).output
+
+            val seen = prefs.getStringSet(SEEN_KEY, emptySet()).orEmpty().toMutableSet()
+            var userId = -1
+            for (rawLine in output.lineSequence()) {
+                val line = rawLine.trim()
+                if (line.startsWith("@@")) {
+                    userId = line.removePrefix("@@").toIntOrNull() ?: -1
+                    continue
+                }
+                if (userId < 0 || !line.startsWith("package:")) continue
+                val packageName = line.removePrefix("package:").trim()
+                if (packageName.isEmpty()) continue
+                if (packageName == BuildConfig.APPLICATION_ID || packageName.startsWith("com.slideindex.app")) continue
+                val key = FreezerCloneKey.make(packageName, userId)
+                if (!seen.add(key)) continue
+                settingsRepository.addFreezerApp(key)
+            }
+            prefs.edit().putStringSet(SEEN_KEY, seen).putLong(LAST_SYNC_KEY, now).apply()
         }
     }
 

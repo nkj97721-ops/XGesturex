@@ -211,7 +211,7 @@ internal class ScreenControlPanelView(
                 view = this,
                 cornerRadiusPx = if (rad > 0f) rad else 28f * density,
                 blurRadiusPx = (28f * density).roundToInt(),
-                tintColor = Color.argb(120, 235, 244, 255),
+                tintColor = Color.argb(130, 24, 24, 28),
             )
             post {
                 val bg = background
@@ -231,7 +231,7 @@ internal class ScreenControlPanelView(
             view = this,
             cornerRadiusPx = 18f * density,
             blurRadiusPx = (32f * density).roundToInt(),
-            tintColor = Color.argb(170, 248, 250, 255),
+            tintColor = Color.argb(ScreenControlStyle.panelAlpha(context, true), 10, 10, 12),
         )
         post {
             val bg = background
@@ -239,6 +239,14 @@ internal class ScreenControlPanelView(
                 background = panelBackground()
             }
         }
+    }
+
+    private fun cycleOpacity() {
+        val percent = ScreenControlStyle.cycle(context)
+        applyPanelBackground()
+        pad.background = padBackground()
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        android.widget.Toast.makeText(context, "不透明度 $percent%", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     fun setMinimized(minimized: Boolean) {
@@ -354,7 +362,7 @@ internal class ScreenControlPanelView(
     private val panelBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 0.85f * density
-        color = Color.argb(135, 255, 255, 255)
+        color = Color.argb(60, 255, 255, 255)
     }
     // 外层极微深色轮廓，在纯白背景下形成立体边界，防止面板边缘被吞噬
     private val panelOuterShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -382,13 +390,13 @@ internal class ScreenControlPanelView(
     private fun panelBackground(): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = 18f * density
-        setColor(Color.argb(if (blurEnabled) 165 else 248, 245, 247, 252))
-        setStroke((1f * density).roundToInt(), Color.argb(35, 0, 0, 0))
+        setColor(Color.argb(ScreenControlStyle.panelAlpha(context, blurEnabled), 10, 10, 12))
+        setStroke((1f * density).roundToInt(), Color.argb(60, 255, 255, 255))
     }
 
     private fun ballBackground(): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
-        setColor(Color.argb(if (blurEnabled) 130 else 220, 235, 240, 248))
+        setColor(Color.argb(if (blurEnabled) 150 else 230, 24, 24, 28))
         setStroke((0.9f * density).roundToInt(), Color.argb(110, 255, 255, 255))
     }
 
@@ -396,9 +404,9 @@ internal class ScreenControlPanelView(
         shape = GradientDrawable.RECTANGLE
         cornerRadius = 12f * density
         // 纯净高亮浅白，在毛玻璃上稍微带一点点微阶梯对比度
-        setColor(Color.argb(if (blurEnabled) 60 else 185, 255, 255, 255))
+        setColor(Color.argb(ScreenControlStyle.padAlpha(context, blurEnabled), 44, 44, 50))
         // 关键：0.85dp 双层对比感细腻边框——用极轻的半透明灰边（14% 暗灰），在纯白背景下立刻把触控区勾勒出来
-        setStroke((0.85f * density).roundToInt(), Color.argb(38, 0, 0, 0))
+        setStroke((0.85f * density).roundToInt(), Color.argb(50, 255, 255, 255))
     }
 
     private fun rippleKey(selected: Boolean = false, accent: Boolean = false): RippleDrawable {
@@ -410,7 +418,7 @@ internal class ScreenControlPanelView(
                     accent -> themeColors.accent
                     selected -> withAlpha(themeColors.accentSoft, 220)
                     blurEnabled -> Color.argb(70, 255, 255, 255)
-                    else -> withAlpha(themeColors.cardBackground, 180)
+                    else -> Color.argb(46, 255, 255, 255)
                 }
             )
             setStroke(
@@ -418,7 +426,7 @@ internal class ScreenControlPanelView(
                 when {
                     accent || selected -> themeColors.accent
                     // 微暗灰轮廓+白光混合（22% 暗灰），让按键在白底上边缘清晰可辨，不再费眼
-                    else -> Color.argb(32, 0, 0, 0)
+                    else -> Color.argb(46, 255, 255, 255)
                 }
             )
         }
@@ -439,7 +447,7 @@ internal class ScreenControlPanelView(
     ) : View(context) {
         private val density = resources.displayMetrics.density
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK
+            color = Color.WHITE
             style = Paint.Style.STROKE
             strokeWidth = 1.35f * density
             strokeCap = Paint.Cap.ROUND
@@ -590,12 +598,18 @@ internal class ScreenControlPanelView(
         private var lastRawX = 0f
         private var lastRawY = 0f
         private var dragging = false
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var movedFar = false
 
         override fun onTouch(view: View, event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     lastRawX = event.rawX
                     lastRawY = event.rawY
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    movedFar = false
                     dragging = true
                     return true
                 }
@@ -606,12 +620,14 @@ internal class ScreenControlPanelView(
                     val dy = event.rawY - lastRawY
                     lastRawX = event.rawX
                     lastRawY = event.rawY
+                    if (hypot(event.rawX - downRawX, event.rawY - downRawY) > 8f * density) movedFar = true
                     if (dx != 0f || dy != 0f) listener.onMovePanel(dx, dy)
                     return true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (dragging) listener.onPanelMoveFinished()
+                    if (event.actionMasked == MotionEvent.ACTION_UP && !movedFar) cycleOpacity()
                     dragging = false
                     return true
                 }
@@ -829,7 +845,7 @@ internal class ScreenControlPanelView(
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = withAlpha(themeColors.textPrimary, if (armed) 220 else 165)
+                color = withAlpha(Color.WHITE, if (armed) 220 else 165)
                 style = Paint.Style.FILL
             }
             val barWidth = (64f * density).coerceAtMost(width * 0.7f)
@@ -934,7 +950,7 @@ internal class ScreenControlPanelView(
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(225, 28, 30, 36)
+                color = Color.argb(225, 230, 232, 238)
                 style = Paint.Style.FILL
             }
             val radius = 1.8f * density

@@ -70,8 +70,24 @@ internal object FreezerPrivilegedOps {
         info.enabled to ((info.flags and ApplicationInfo.FLAG_SUSPENDED) != 0)
     }.getOrNull()
 
+    private val cloneInfoCache =
+        java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ApplicationInfo?>>()
+
+    private fun invalidateCloneCache() = cloneInfoCache.clear()
+
+    private fun appInfoAsUser(packageName: String, userId: Int): ApplicationInfo? {
+        val cacheKey = "$packageName#$userId"
+        val now = android.os.SystemClock.elapsedRealtime()
+        cloneInfoCache[cacheKey]?.let { (time, info) ->
+            if (now - time < 2000L) return info
+        }
+        val info = queryAppInfoAsUser(packageName, userId)
+        cloneInfoCache[cacheKey] = now to info
+        return info
+    }
+
     /** 经 Shizuku 调 IPackageManager.getApplicationInfo(包名, flags, 用户)。 */
-    private fun appInfoAsUser(packageName: String, userId: Int): ApplicationInfo? = runCatching {
+    private fun queryAppInfoAsUser(packageName: String, userId: Int): ApplicationInfo? = runCatching {
         val packageManager = bindShizukuPackageManager()
         val method = packageManager.javaClass.methods.first {
             it.name == "getApplicationInfo" && it.parameterTypes.size == 3
@@ -302,9 +318,11 @@ internal object FreezerPrivilegedOps {
 
     private fun waitForSuspended(context: Context, packageName: String, suspended: Boolean): Boolean {
         repeat(8) {
+            invalidateCloneCache()
             if (isAppSuspended(context, packageName) == suspended) return true
             Thread.sleep(60)
         }
+        invalidateCloneCache()
         return isAppSuspended(context, packageName) == suspended
     }
 
@@ -416,9 +434,11 @@ internal object FreezerPrivilegedOps {
 
     private fun waitForState(context: Context, packageName: String, disabled: Boolean): Boolean {
         repeat(8) {
+            invalidateCloneCache()
             if (isAppDisabled(context, packageName) == disabled) return true
             Thread.sleep(60)
         }
+        invalidateCloneCache()
         return isAppDisabled(context, packageName) == disabled
     }
 
