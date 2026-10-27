@@ -111,7 +111,7 @@ fun FreezerGridUi(
                 app.label.contains(query, ignoreCase = true) ||
                 app.packageName.contains(query, ignoreCase = true) ||
                 app.pinyinKey.contains(query)
-        }.sortedByDescending { app -> FreezerPinStore.isPinned(context, app.packageName) }
+        }.let { FreezerLaunchOrder.arrange(context, it) }
     }
 
     val columnCount = if (

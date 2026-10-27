@@ -188,6 +188,8 @@ object FreezerOperations {
         app: AppInfo,
         fullscreen: Boolean = true
     ): Boolean = withContext(Dispatchers.IO) {
+        // 记下启动时间：冰箱列表里它会排到最前面，冻结后回到原位。
+        FreezerLaunchOrder.mark(context, app.packageName)
         when (val state = stateOf(context, app.packageName)) {
             FreezerAppState.FROZEN -> {
                 setFreezerIntent(context, app.packageName, FreezerAppIntent.FROZEN)
